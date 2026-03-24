@@ -54,7 +54,7 @@ void Calculate(std::vector<Matrix *> keys, std::vector<Matrix *> values,
 
     // For each row, compute sum and divide
     size_t num_rows = current_query->GetRowNum();
-    Matrix *softmax_result = matrix_memory_allocator.Allocate("softmax_result");
+    Matrix *softmax_result = nullptr;
 
     for (size_t row = 0; row < num_rows; ++row) {
       // Get the row from exp_qk_t
@@ -71,19 +71,19 @@ void Calculate(std::vector<Matrix *> keys, std::vector<Matrix *> values,
 
       // Set the row in softmax_result
       if (row == 0) {
-        // First row, initialize softmax_result
-        gpu_sim.Copy(normalized_row, softmax_result, kInSharedMemory);
+        // First row, use normalized_row as the initial result
+        softmax_result = normalized_row;
       } else {
         // Concatenate with existing result
         Matrix *new_softmax = matrix_memory_allocator.Allocate("new_softmax_" + std::to_string(row));
         gpu_sim.Concat(softmax_result, normalized_row, new_softmax, 0, kInSharedMemory);
         gpu_sim.ReleaseMatrix(softmax_result);
+        gpu_sim.ReleaseMatrix(normalized_row);
         softmax_result = new_softmax;
       }
 
       gpu_sim.ReleaseMatrix(row_matrix);
       gpu_sim.ReleaseMatrix(row_sum);
-      gpu_sim.ReleaseMatrix(normalized_row);
     }
 
     // Compute Softmax(QK^T) * V
