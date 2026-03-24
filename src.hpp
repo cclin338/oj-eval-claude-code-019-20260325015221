@@ -12,41 +12,33 @@ void Calculate(std::vector<Matrix *> keys, std::vector<Matrix *> values,
     // Move current query to SRAM for computation
     gpu_sim.MoveMatrixToSharedMem(current_query);
 
-    // Stack all keys[0..i] vertically to create K_stacked
+    // Stack all keys[0..i] vertically to create K_stacked (in HBM first)
     Matrix *k_stacked = matrix_memory_allocator.Allocate("k_stacked");
     gpu_sim.Copy(keys[0], k_stacked, kInGpuHbm);
-    gpu_sim.MoveMatrixToSharedMem(k_stacked);
 
     for (size_t j = 1; j <= i; ++j) {
-      Matrix *temp_key = matrix_memory_allocator.Allocate("temp_key_" + std::to_string(j));
-      gpu_sim.Copy(keys[j], temp_key, kInGpuHbm);
-      gpu_sim.MoveMatrixToSharedMem(temp_key);
-
       Matrix *new_k_stacked = matrix_memory_allocator.Allocate("new_k_stacked_" + std::to_string(j));
-      gpu_sim.Concat(k_stacked, temp_key, new_k_stacked, 0, kInSharedMemory);
-
+      gpu_sim.Concat(k_stacked, keys[j], new_k_stacked, 0, kInGpuHbm);
       gpu_sim.ReleaseMatrix(k_stacked);
-      gpu_sim.ReleaseMatrix(temp_key);
       k_stacked = new_k_stacked;
     }
 
-    // Stack all values[0..i] vertically to create V_stacked
+    // Move K_stacked to SRAM for computation
+    gpu_sim.MoveMatrixToSharedMem(k_stacked);
+
+    // Stack all values[0..i] vertically to create V_stacked (in HBM first)
     Matrix *v_stacked = matrix_memory_allocator.Allocate("v_stacked");
     gpu_sim.Copy(values[0], v_stacked, kInGpuHbm);
-    gpu_sim.MoveMatrixToSharedMem(v_stacked);
 
     for (size_t j = 1; j <= i; ++j) {
-      Matrix *temp_value = matrix_memory_allocator.Allocate("temp_value_" + std::to_string(j));
-      gpu_sim.Copy(values[j], temp_value, kInGpuHbm);
-      gpu_sim.MoveMatrixToSharedMem(temp_value);
-
       Matrix *new_v_stacked = matrix_memory_allocator.Allocate("new_v_stacked_" + std::to_string(j));
-      gpu_sim.Concat(v_stacked, temp_value, new_v_stacked, 0, kInSharedMemory);
-
+      gpu_sim.Concat(v_stacked, values[j], new_v_stacked, 0, kInGpuHbm);
       gpu_sim.ReleaseMatrix(v_stacked);
-      gpu_sim.ReleaseMatrix(temp_value);
       v_stacked = new_v_stacked;
     }
+
+    // Move V_stacked to SRAM for computation
+    gpu_sim.MoveMatrixToSharedMem(v_stacked);
 
     // Transpose K_stacked
     gpu_sim.Transpose(k_stacked, kInSharedMemory);
@@ -60,7 +52,7 @@ void Calculate(std::vector<Matrix *> keys, std::vector<Matrix *> values,
     Matrix *exp_qk_t = matrix_memory_allocator.Allocate("exp_qk_t");
     gpu_sim.MatExp(qk_t, exp_qk_t);
 
-    // For each row, compute the sum and divide
+    // For each row, compute sum and divide
     size_t num_rows = current_query->GetRowNum();
     Matrix *softmax_result = matrix_memory_allocator.Allocate("softmax_result");
 
@@ -69,11 +61,11 @@ void Calculate(std::vector<Matrix *> keys, std::vector<Matrix *> values,
       Matrix *row_matrix = matrix_memory_allocator.Allocate("row_" + std::to_string(row));
       gpu_sim.GetRow(exp_qk_t, row, row_matrix, kInSharedMemory);
 
-      // Sum the row
+      // Sum() row
       Matrix *row_sum = matrix_memory_allocator.Allocate("row_sum_" + std::to_string(row));
       gpu_sim.Sum(row_matrix, row_sum);
 
-      // Divide the row by its sum
+      // Divide() row by its sum
       Matrix *normalized_row = matrix_memory_allocator.Allocate("normalized_row_" + std::to_string(row));
       gpu_sim.MatDiv(row_matrix, row_sum, normalized_row);
 
@@ -111,7 +103,7 @@ void Calculate(std::vector<Matrix *> keys, std::vector<Matrix *> values,
 
     gpu_sim.Run(false, &matrix_memory_allocator);
 
-    // Commit the answer
+    // Commit() answer
     rater.CommitAnswer(*attention_result);
   }
 }
